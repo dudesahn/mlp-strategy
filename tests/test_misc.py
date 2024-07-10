@@ -3,6 +3,7 @@ from utils import harvest_strategy, check_status
 import brownie
 from brownie import ZERO_ADDRESS, chain, interface
 
+
 # test removing a strategy from the withdrawal queue
 def test_remove_from_withdrawal_queue(
     gov,

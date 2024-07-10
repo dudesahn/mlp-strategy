@@ -3,6 +3,7 @@ from brownie import chain, Contract, ZERO_ADDRESS, accounts
 import pytest
 from utils import harvest_strategy, check_status
 
+
 # test our harvest triggers
 def test_triggers(
     gov,

@@ -1,79 +1,51 @@
 // SPDX-License-Identifier: AGPL-3.0
 pragma solidity ^0.8.15;
 
-// These are the core Yearn libraries
-import "@openzeppelin/contracts/utils/math/Math.sol";
+import "@openzeppelin/contracts@4.9.3/utils/math/Math.sol";
 import "@yearnvaults/contracts/BaseStrategy.sol";
 
 interface IOracle {
-    // pull our asset price, in usdc, via yearn's oracle
-    function getPriceUsdcRecommended(
-        address tokenAddress
-    ) external view returns (uint256);
+    function latestAnswer() external view returns (int256);
 }
 
 interface IMorphex is IERC20 {
     function claimable(address) external view returns (uint256);
 
-    function pairAmounts(address) external view returns (uint256);
+    function handleRewards(bool, bool, bool, bool) external;
 
-    function depositBalances(address, address) external view returns (uint256);
-
-    function handleRewards(bool, bool, bool) external;
-
-    function withdraw() external;
-
-    function deposit(uint256) external;
-
-    function signalTransfer(address) external;
-
-    function acceptTransfer(address) external;
-
-    function getPairAmount(address, uint256) external view returns (uint256);
-
-    function mintAndStakeGlp(
+    function mintAndStakeBlt(
         address,
         uint256,
         uint256,
         uint256
     ) external returns (uint256);
-
-    function exercise(
-        uint256 _amount,
-        uint256 _profitSlippageAllowed,
-        uint256 _swapSlippageAllowed
-    ) external;
 }
 
-contract StrategyBLTStaker is BaseStrategy {
+contract StrategyMLTStaker is BaseStrategy {
     using SafeERC20 for IERC20;
     /* ========== STATE VARIABLES ========== */
 
     /// @notice Morphex's reward router.
     /// @dev Used for staking/unstaking assets and claiming rewards.
     IMorphex public constant rewardRouter =
-        IMorphex(0x49A97680938B4F1f73816d1B70C3Ab801FAd124B);
+        IMorphex(0x73bF80506F891030570FDC4D53a71f44a442353C);
 
     /// @notice BLT, the LP token for the basket of collateral assets on Morphex.
     /// @dev This is staked for our want token.
-    IMorphex public constant mlp =
-        IMorphex(0xe771b4E273dF31B85D7A7aE0Efd22fb44BdD0633);
+    IMorphex public constant mlt =
+        IMorphex(0x952AdBB385296Dcf86a668f7eaa02DF7eb684439);
 
     /// @notice fsBLT, the representation of our staked BLT that the strategy holds.
-    IMorphex public constant fsMlp =
-        IMorphex(0x2D5875ab0eFB999c1f49C798acb9eFbd1cfBF63c);
+    IMorphex public constant fsMlt =
+        IMorphex(0x6c72ADbDc1029ee901dC97C5604487285D972A4f);
+
+    /// @notice used to track claimable WETH
+    IMorphex public constant fMlt =
+        IMorphex(0xCcBF79AA51919f1711E40293a32bbC71F8842FC3);
 
     /// @notice Address for WETH, our fee token.
     IERC20 public constant weth =
         IERC20(0x4200000000000000000000000000000000000006);
-
-    /// @notice Address for oBMX, our option token (received as rewards).
-    IERC20 public constant oBMX =
-        IERC20(0x3Ff7AB26F2dfD482C40bDaDfC0e88D01BFf79713);
-
-    /// @notice Helper contract to sell oBMX for WETH.
-    IMorphex public constant exerciseHelperBMX =
-        IMorphex(0x7103834002CE76ad0BCb18dDB579c1266E1A925b);
 
     /// @notice Minimum profit size in USDC that we want to harvest.
     /// @dev Only used in harvestTrigger.
@@ -93,9 +65,8 @@ contract StrategyBLTStaker is BaseStrategy {
 
     constructor(address _vault) BaseStrategy(_vault) {
         // want = sBLT
-        address mlpManager = 0x9fAc7b75f367d5B35a6D6D0a09572eFcC3D406C5;
-        weth.approve(address(mlpManager), type(uint256).max);
-        oBMX.approve(address(exerciseHelperBMX), type(uint256).max);
+        address mltManager = 0xf9Fc0B2859f9B6d33fD1Cea5B0A9f1D56C258178;
+        weth.approve(address(mltManager), type(uint256).max);
 
         // set up our max delay
         maxReportDelay = 7 days;
@@ -105,7 +76,7 @@ contract StrategyBLTStaker is BaseStrategy {
         harvestProfitMaxInUsdc = 10_000e6;
 
         // set our strategy's name
-        stratName = "StrategyBLTStaker";
+        stratName = "StrategyMLTStaker";
     }
 
     /* ========== VIEWS ========== */
@@ -117,22 +88,17 @@ contract StrategyBLTStaker is BaseStrategy {
 
     /// @notice Total assets the strategy holds.
     function estimatedTotalAssets() public view override returns (uint256) {
-        return fsMlp.balanceOf(address(this));
-    }
-
-    /// @notice Balance of oBMX sitting in our strategy.
-    function balanceOfoBmx() public view returns (uint256) {
-        return oBMX.balanceOf(address(this));
+        return fsMlt.balanceOf(address(this));
     }
 
     /// @notice Balance of WETH sitting in our strategy.
-    function balanceOfoWeth() public view returns (uint256) {
+    function balanceOfWeth() public view returns (uint256) {
         return weth.balanceOf(address(this));
     }
 
     /// @notice Balance of WETH claimable from BLT fees.
     function claimableWeth() public view returns (uint256) {
-        return fsMlp.claimable(address(this));
+        return fMlt.claimable(address(this));
     }
 
     /* ========== CORE STRATEGY FUNCTIONS ========== */
@@ -184,38 +150,21 @@ contract StrategyBLTStaker is BaseStrategy {
 
     /// @notice Provide any loose WETH to BLT and stake it.
     /// @dev May only be called by vault managers.
-    function exercise(
-        uint256 _profitSlippage,
-        uint256 _swapSlippage
-    ) external onlyVaultManagers {
-        // exercise oBMX for WETH if we have enough
-        uint256 toExercise = balanceOfoBmx();
-        if (toExercise > 0) {
-            exerciseHelperBMX.exercise(
-                toExercise,
-                _profitSlippage,
-                _swapSlippage
-            );
-        }
-    }
-
-    /// @notice Provide any loose WETH to BLT and stake it.
-    /// @dev May only be called by vault managers.
     /// @return Amount of BLT staked from profits.
     function mintAndStake() external onlyVaultManagers returns (uint256) {
-        uint256 wethBalance = balanceOfoWeth();
-        uint256 newMlp;
+        uint256 wethBalance = balanceOfWeth();
+        uint256 newMlt;
 
         // deposit our WETH to BLT
         if (wethBalance > 0) {
-            newMlp = rewardRouter.mintAndStakeGlp(
+            newMlt = rewardRouter.mintAndStakeBlt(
                 address(weth),
                 wethBalance,
                 0,
                 0
             );
         }
-        return newMlp;
+        return newMlt;
     }
 
     function adjustPosition(uint256 _debtOutstanding) internal override {
@@ -257,29 +206,10 @@ contract StrategyBLTStaker is BaseStrategy {
 
     // migrate our want token to a new strategy if needed
     function prepareMigration(address _newStrategy) internal override {
-        uint256 wethBalance = balanceOfoWeth();
+        uint256 wethBalance = balanceOfWeth();
         if (wethBalance > 0) {
             weth.safeTransfer(_newStrategy, wethBalance);
         }
-
-        uint256 oBmxBalance = balanceOfoBmx();
-        if (oBmxBalance > 0) {
-            oBMX.safeTransfer(_newStrategy, oBmxBalance);
-        }
-    }
-
-    /// @notice Part 1 of our strategy migration. Pull it out manually for migrating to new want
-    /// @dev May only be called by governance.
-    /// @param _newStrategy Address of the new strategy we are migrating to.
-    function manualTransfer(address _newStrategy) external onlyGovernance {
-        rewardRouter.signalTransfer(_newStrategy);
-    }
-
-    /// @notice Part 2 of our strategy migration. Must do before harvesting the new strategy.
-    /// @dev May only be called by governance.
-    /// @param _oldStrategy Address of the old strategy we are migrating from.
-    function acceptTransfer(address _oldStrategy) external onlyGovernance {
-        rewardRouter.acceptTransfer(_oldStrategy);
     }
 
     /// @notice Manually claim our rewards.
@@ -288,9 +218,9 @@ contract StrategyBLTStaker is BaseStrategy {
         _handleRewards();
     }
 
-    function _handleRewards() internal onlyVaultManagers {
-        // claim oBMX, claim WETH, convert WETH to ETH
-        rewardRouter.handleRewards(true, true, false);
+    function _handleRewards() internal {
+        // claim opBMX, stake mul points, claim WETH, convert WETH to ETH
+        rewardRouter.handleRewards(true, true, true, false);
     }
 
     /* ========== KEEP3RS ========== */
@@ -352,16 +282,14 @@ contract StrategyBLTStaker is BaseStrategy {
     }
 
     /// @notice Calculates the profit if all claimable assets were sold for USDC (6 decimals).
-    /// @dev Uses yearn's lens oracle, if returned values are strange then troubleshoot there.
+    /// @dev Uses wrapper for Redstone WETH oracle.
     /// @return Total return in USDC from selling claimable WETH.
     function claimableProfitInUsdc() public view returns (uint256) {
-        IOracle yearnOracle = IOracle(
-            0xE0F3D78DB7bC111996864A32d22AB0F59Ca5Fa86
-        ); // yearn lens oracle
-        uint256 wethPrice = yearnOracle.getPriceUsdcRecommended(address(weth));
+        IOracle oracle = IOracle(0x37E4e0B01773Bb7A09eA0265eD04A18700A40801);
+        uint256 wethPrice = uint256(oracle.latestAnswer());
 
-        // Oracle returns prices as 6 decimals, so multiply by claimable amount and divide by token decimals (1e18)
-        return (wethPrice * claimableWeth()) / 1e18;
+        // Oracle returns prices as 8 decimals, so multiply by claimable amount and divide by token decimals * 1e2
+        return (wethPrice * claimableWeth()) / 1e20;
     }
 
     /// @notice Convert our keeper's eth cost into want
@@ -371,9 +299,6 @@ contract StrategyBLTStaker is BaseStrategy {
     function ethToWant(
         uint256 _ethAmount
     ) public view override returns (uint256) {}
-
-    // include so our contract plays nicely with ftm
-    receive() external payable {}
 
     /* ========== SETTERS ========== */
     // These functions are useful for setting parameters of the strategy that may need to be adjusted.

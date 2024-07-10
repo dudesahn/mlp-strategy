@@ -2,6 +2,7 @@ import pytest
 import brownie
 from brownie import interface, chain, accounts
 
+
 # returns (profit, loss) of a harvest
 def harvest_strategy(
     use_yswaps,
@@ -30,25 +31,24 @@ def harvest_strategy(
         strategy.setDoHealthCheck(False, {"from": gov})
         print("\nTurned off health check!\n")
 
+    # here we send in a small amount of WETH from a whale to simulate profits from fees
+    # only do it if our DR is >0 (so we don't get stuck in a loop of profits triggering more profits) and we have assets already (so no profits before first harvest)
+    #     if (
+    #         vault.strategies(strategy)["debtRatio"] > 0
+    #         and strategy.estimatedTotalAssets() > 0
+    #     ):
+    #         weth_whale = accounts.at(
+    #             "0xe9b14a1Be94E70900EDdF1E22A4cB8c56aC9e10a", force=True
+    #         )
+    #         weth = interface.IERC20("0x4200000000000000000000000000000000000006")
+    #         weth.transfer(strategy.address, 1e14, {"from": weth_whale})
+
     # we can use the tx for debugging if needed
     strategy.setDoHealthCheck(False, {"from": gov})
     tx = strategy.harvest({"from": gov})
     profit = tx.events["Harvested"]["profit"]
     loss = tx.events["Harvested"]["loss"]
     assert loss == 0
-
-    # here we send in a small amount of WETH from a whale to simulate profits from fees
-    if vault.strategies(strategy)["debtRatio"] > 0:
-        weth_whale = accounts.at(
-            "0xB4885Bc63399BF5518b994c1d0C153334Ee579D0", force=True
-        )
-        weth = interface.IERC20("0x4200000000000000000000000000000000000006")
-        weth.transfer(strategy.address, 1e14, {"from": weth_whale})
-        obmx_whale = accounts.at(
-            "0xeA00CFb98716B70760A6E8A5Ffdb8781Ef63fa5A", force=True
-        )
-        obmx = interface.IERC20("0x3Ff7AB26F2dfD482C40bDaDfC0e88D01BFf79713")
-        obmx.transfer(strategy.address, 10e18, {"from": obmx_whale})
 
     # our trade handler takes action, sending out rewards tokens and sending back in profit. for gmx, treat it the same here as yswaps.
     extra = 0
@@ -76,13 +76,14 @@ def trade_handler_action(
     # since this behaves very similar to ySwaps, we have use_yswaps = True
     chain.sleep(1)
     chain.mine(1)
+    # make sure we have profit
+    weth_to_deposit = strategy.balanceOfWeth()
+    if weth_to_deposit > 0:
+        print("🤑 WETH to deposit in strategy")
     strategy.mintAndStake({"from": gov})
     chain.sleep(1)
     chain.mine(1)
-    strategy.exercise(5000, 5000, {"from": gov})
-    chain.sleep(1)
-    chain.mine(1)
-    return 0
+    return weth_to_deposit
 
 
 # do a check on our strategy and vault of choice

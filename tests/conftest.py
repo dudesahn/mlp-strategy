@@ -1,6 +1,5 @@
 import pytest
 from brownie import config, Contract, ZERO_ADDRESS, chain, interface, accounts
-from eth_abi import encode_single
 import requests
 
 
@@ -13,8 +12,8 @@ def isolate(fn_isolation):
 # for this repo, especially helper with the long swap router test
 use_tenderly = False
 
-# use this to set what chain we use. 1 for ETH, 250 for fantom, 10 optimism, 42161 arbitrum, 8453 base
-chain_used = 8453
+# use this to set what chain we use. 1 for ETH, 250 for fantom, 10 optimism, 42161 arbitrum, 8453 base, 34443 mode
+chain_used = 34443
 
 
 @pytest.fixture(scope="session")
@@ -24,6 +23,7 @@ def tests_using_tenderly():
 
 
 ################################################## TENDERLY DEBUGGING ##################################################
+
 
 # change autouse to True if we want to use this fork to help debug tests
 @pytest.fixture(scope="session", autouse=use_tenderly)
@@ -68,7 +68,7 @@ def tenderly_fork(web3, chain):
 
 @pytest.fixture(scope="session")
 def token():
-    token_address = "0x64755939a80BC89E1D2d0f93A312908D348bC8dE"  # this should be the address of the ERC-20 used by the strategy/vault (sMLP)
+    token_address = "0x0Eb231766cD891ed6aA4FafEeF60E1c01b18c12a"  # this should be the address of the ERC-20 used by the strategy/vault (sMLT)
     yield interface.IERC20(token_address)
 
 
@@ -77,8 +77,8 @@ def whale(amount, token):
     # Totally in it for the tech
     # Update this with a large holder of your want token (the largest EOA holder of LP)
     whale = accounts.at(
-        "0x89955a99552F11487FFdc054a6875DF9446B2902", force=True
-    )  # 0x89955a99552F11487FFdc054a6875DF9446B2902, fsBLP, 8
+        "0xB1dD2Fdb023cB54b7cc2a0f5D9e8d47a9F7723ce", force=True
+    )  # 0xB1dD2Fdb023cB54b7cc2a0f5D9e8d47a9F7723ce, fsMLT, 61
     if token.balanceOf(whale) < 2 * amount:
         raise ValueError(
             "Our whale needs more funds. Find another whale or reduce your amount variable."
@@ -88,7 +88,7 @@ def whale(amount, token):
 
 @pytest.fixture(scope="session")
 def amount(token):
-    amount = 5 * 10 ** token.decimals()
+    amount = 30 * 10 ** token.decimals()
     yield amount
 
 
@@ -96,8 +96,8 @@ def amount(token):
 def profit_whale(profit_amount, token):
     # ideally not the same whale as the main whale, or else they will lose money
     profit_whale = accounts.at(
-        "0x89955a99552F11487FFdc054a6875DF9446B2902", force=True
-    )  # 0x89955a99552F11487FFdc054a6875DF9446B2902, fsMLP, 1 tokens
+        "0xB1dD2Fdb023cB54b7cc2a0f5D9e8d47a9F7723ce", force=True
+    )  # 0xB1dD2Fdb023cB54b7cc2a0f5D9e8d47a9F7723ce, fsMLT, 61 tokens
     if token.balanceOf(profit_whale) < 5 * profit_amount:
         raise ValueError(
             "Our profit whale needs more funds. Find another whale or reduce your profit_amount variable."
@@ -107,14 +107,14 @@ def profit_whale(profit_amount, token):
 
 @pytest.fixture(scope="session")
 def profit_amount(token):
-    profit_amount = 5 * 10 ** token.decimals()
+    profit_amount = 0.1 * 10 ** token.decimals()
     yield profit_amount
 
 
 # set address if already deployed, use ZERO_ADDRESS if not
 @pytest.fixture(scope="session")
 def vault_address():
-    vault_address = "0x4E74D4Db6c0726ccded4656d0BCE448876BB4C7A"
+    vault_address = ZERO_ADDRESS
     yield vault_address
 
 
@@ -128,14 +128,14 @@ def old_vault():
 # this is the name we want to give our strategy
 @pytest.fixture(scope="session")
 def strategy_name():
-    strategy_name = "StrategyBLTStaker"
+    strategy_name = "StrategyMLTStaker"
     yield strategy_name
 
 
 # this is the name of our strategy in the .sol file
 @pytest.fixture(scope="session")
-def contract_name(StrategyBLTStaker):
-    contract_name = StrategyBLTStaker
+def contract_name(StrategyMLTStaker):
+    contract_name = StrategyMLTStaker
     yield contract_name
 
 
@@ -177,7 +177,7 @@ def sleep_time():
     hour = 1
 
     # change this one right here
-    hours_to_sleep = 1
+    hours_to_sleep = 48
 
     sleep_time = hour * hours_to_sleep
     yield sleep_time
@@ -348,6 +348,52 @@ elif chain_used == 8453:  # base
     def trade_factory():
         yield to_sweep
 
+elif chain_used == 34443:  # mode
+
+    @pytest.fixture(scope="session")
+    def gov():  # BMX multisig 0x99FC968d932f394256e536B5dF3A6e2C8aa2DD36
+        yield accounts.at("0x99FC968d932f394256e536B5dF3A6e2C8aa2DD36", force=True)
+
+    # set all of the following to Scream Guardian MS
+    @pytest.fixture(scope="session")
+    def management():
+        yield accounts.at("0x89955a99552F11487FFdc054a6875DF9446B2902", force=True)
+
+    @pytest.fixture(scope="session")
+    def rewards(management):
+        yield management
+
+    @pytest.fixture(scope="session")
+    def guardian(management):
+        yield management
+
+    @pytest.fixture(scope="session")
+    def strategist(management):
+        yield management
+
+    @pytest.fixture(scope="session")
+    def keeper(management):
+        yield management
+
+    @pytest.fixture(scope="session")
+    def to_sweep():
+        # token we can sweep out of strategy (use DAI)
+        yield interface.IERC20("0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb")
+
+    # deploy this eventually
+
+    @pytest.fixture(scope="session")
+    def keeper_wrapper():
+        yield to_sweep
+
+    @pytest.fixture(scope="session")
+    def trade_factory():
+        yield to_sweep
+
+    @pytest.fixture(scope="session")
+    def weth():
+        yield Contract("0x4200000000000000000000000000000000000006")
+
 
 @pytest.fixture(scope="module")
 def vault(pm, gov, rewards, guardian, management, token, vault_address):
@@ -386,42 +432,23 @@ def strategy(
     vault,
     gov,
     management,
-    health_check,
     contract_name,
     strategy_name,
-    base_fee_oracle,
     vault_address,
     trade_factory,
     to_vest,
-    obmx,
     weth,
 ):
     # will need to update this based on the strategy's constructor ******
     strategy = gov.deploy(contract_name, vault)
 
     strategy.setKeeper(keeper, {"from": gov})
-    strategy.setHealthCheck(health_check, {"from": gov})
-    strategy.setDoHealthCheck(True, {"from": gov})
     vault.setPerformanceFee(0, {"from": gov})
     vault.setManagementFee(0, {"from": gov})
 
-    # if we have other strategies, set them to zero DR and remove them from the queue
-    strat_address = vault.withdrawalQueue(0)
-    old_strategy = Contract.from_explorer(strat_address)
-    old_strategy.setEmergencyExit({"from": gov})
-    old_strategy.harvest({"from": gov})
-    vault.removeStrategyFromQueue(strat_address, {"from": gov})
-
     vault.addStrategy(strategy, 10_000, 0, 2**256 - 1, 0, {"from": gov})
-    old_strategy.handleRewards({"from": gov})
-    assert obmx.balanceOf(old_strategy) > 0
 
     # turn our oracle into testing mode by setting the provider to 0x00, then forcing true
-    strategy.setBaseFeeOracle(base_fee_oracle, {"from": management})
-    base_fee_oracle.setBaseFeeProvider(
-        ZERO_ADDRESS, {"from": base_fee_oracle.governance()}
-    )
-    base_fee_oracle.setManualBaseFeeBool(True, {"from": base_fee_oracle.governance()})
     assert strategy.isBaseFeeAcceptable() == True
 
     yield strategy

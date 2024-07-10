@@ -3,6 +3,7 @@ from utils import harvest_strategy, check_status
 from brownie import accounts, interface, chain
 import brownie
 
+
 # test migrating a strategy
 def test_migration(
     gov,
@@ -67,14 +68,10 @@ def test_migration(
     strategy.handleRewards({"from": gov})
     vault.migrateStrategy(strategy, new_strategy, {"from": gov})
 
-    # gmx has a two-step migration, have to accept it on the new strategy too
-    if is_gmx:
-        new_strategy.acceptTransfer(strategy, {"from": gov})
-
     ####### ADD LOGIC TO MAKE SURE ASSET TRANSFER WENT AS EXPECTED #######
-    wftm = interface.IERC20(strategy.wftm())
-    assert wftm.balanceOf(strategy) == 0
-    assert wftm.balanceOf(new_strategy) > 0
+    weth = interface.IERC20(strategy.weth())
+    assert weth.balanceOf(strategy) == 0
+    assert weth.balanceOf(new_strategy) > 0
 
     # assert that our old strategy is empty
     updated_total_old = strategy.estimatedTotalAssets()
@@ -244,10 +241,6 @@ def test_empty_migration(
 
     # migrate our old strategy
     vault.migrateStrategy(strategy, new_strategy, {"from": gov})
-
-    # gmx has a two-step migration, have to accept it on the new strategy too
-    if is_gmx:
-        new_strategy.acceptTransfer(strategy, {"from": gov})
 
     # new strategy should also be empty
     if is_gmx:

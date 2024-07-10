@@ -2,6 +2,7 @@ from brownie import chain, Contract
 from utils import harvest_strategy
 import pytest
 
+
 # test the our strategy's ability to deposit, harvest, and withdraw, with different optimal deposit tokens if we have them
 def test_simple_harvest(
     gov,
@@ -58,6 +59,9 @@ def test_simple_harvest(
         vault.pricePerShare() / 1e18,
     )
 
+    # shouldn't have anything claimable before we deposit
+    assert strategy.claimableWeth() == 0
+
     # harvest, store asset amount
     (profit, loss, extra) = harvest_strategy(
         is_gmx,
@@ -90,6 +94,9 @@ def test_simple_harvest(
 
     # simulate profits
     chain.sleep(sleep_time)
+    assert strategy.claimableWeth() > 0
+    print("🚨🚨🚨 Claimable WETH:", strategy.claimableWeth())
+    print(" Claimable in USDC:", strategy.claimableProfitInUsdc())
 
     # harvest, store new asset amount
     (profit, loss, extra) = harvest_strategy(
@@ -101,7 +108,16 @@ def test_simple_harvest(
         profit_amount,
         target,
     )
+
     print("Profit:", profit / 1e18)
+
+    # loose WETH, profitable harvest, or assets that will be taken as profit next harvest
+    assert (
+        strategy.balanceOfWeth() > 0
+        or profit > 0
+        or strategy.estimatedTotalAssets() > vault.totalAssets()
+    )
+
     # record this here so it isn't affected if we donate via ySwaps
     strategy_assets = strategy.estimatedTotalAssets()
 
