@@ -63,6 +63,10 @@ contract StrategyBLTStaker is BaseStrategy {
     IMorphex public constant fsMlp =
         IMorphex(0x2D5875ab0eFB999c1f49C798acb9eFbd1cfBF63c);
 
+    /// @notice fBLT, used to check for claimable rewards
+    IMorphex public constant fMlp =
+        IMorphex(0xa2242d0A8b0b5c1A487AbFC03Cd9FEf6262BAdCA);
+
     /// @notice Address for WETH, our fee token.
     IERC20 public constant weth =
         IERC20(0x4200000000000000000000000000000000000006);
@@ -132,7 +136,7 @@ contract StrategyBLTStaker is BaseStrategy {
 
     /// @notice Balance of WETH claimable from BLT fees.
     function claimableWeth() public view returns (uint256) {
-        return fsMlp.claimable(address(this));
+        return fMlp.claimable(address(this));
     }
 
     /* ========== CORE STRATEGY FUNCTIONS ========== */
